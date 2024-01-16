@@ -4,7 +4,7 @@ from scipy import linalg
 from scipy import sparse as sp
 from spreg.utils import spdot, spmultiply
 
-from .family import Binomial, Poisson
+from .family import Binomial, Poisson, NegativeBinomial
 
 
 def _compute_betas(y, x):
@@ -120,7 +120,7 @@ def iwls(
 
     if isinstance(family, Binomial):
         y = family.link._clean(y)
-    if isinstance(family, Poisson):
+    if isinstance(family, (Poisson, NegativeBinomial)):
         y_off = y / offset
         y_off = family.starting_mu(y_off)
         v = family.predict(y_off)

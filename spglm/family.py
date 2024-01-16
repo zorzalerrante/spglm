@@ -988,3 +988,244 @@ class Binomial(Family):
             (cox_snell(endog) - cox_snell(mu))
             / (mu ** (1 / 6.0) * (1 - mu) ** (1 / 6.0))
         )
+
+
+class NegativeBinomial(Family):
+    r"""
+    Negative Binomial exponential family.
+    Parameters
+    ----------
+    link : a link instance, optional
+        The default link for the negative binomial family is the log link.
+        Available links are log, cloglog, identity, nbinom and power.
+        See statsmodels.genmod.families.links for more information.
+    alpha : float, optional
+        The ancillary parameter for the negative binomial distribution.
+        For now ``alpha`` is assumed to be nonstochastic.  The default value
+        is 1.  Permissible values are usually assumed to be between .01 and 2.
+    Attributes
+    ----------
+    NegativeBinomial.link : a link instance
+        The link function of the negative binomial instance
+    NegativeBinomial.variance : varfunc instance
+        ``variance`` is an instance of
+        statsmodels.genmod.families.varfuncs.nbinom
+    See Also
+    --------
+    statsmodels.genmod.families.family.Family : Parent class for all links.
+    :ref:`links` : Further details on links.
+    Notes
+    -----
+    Power link functions are not yet supported.
+    Parameterization for :math:`y=0, 1, 2, \ldots` is
+    .. math::
+       f(y) = \frac{\Gamma(y+\frac{1}{\alpha})}{y!\Gamma(\frac{1}{\alpha})}
+              \left(\frac{1}{1+\alpha\mu}\right)^{\frac{1}{\alpha}}
+              \left(\frac{\alpha\mu}{1+\alpha\mu}\right)^y
+    with :math:`E[Y]=\mu\,` and :math:`Var[Y]=\mu+\alpha\mu^2`.
+    """
+    links = [L.log, L.cloglog, L.identity, L.nbinom, L.Power]
+    # TODO: add the ability to use the power links with an if test
+    # similar to below
+    variance = V.nbinom
+    safe_links = [
+        L.Log,
+    ]
+
+    def __init__(self, link=L.log, alpha=1.0):
+        self.alpha = 1.0 * alpha  # make it at least float
+        self.link = link()
+        self.variance = NegativeBinomial.variance
+
+    def _clean(self, x):
+        """
+        Helper function to trim the data so that is in (0,inf)
+
+        """
+        return np.clip(x, FLOAT_EPS, np.inf)
+
+    def resid_dev(self, endog, mu):
+        r"""
+        Negative Binomial deviance residuals
+        Parameters
+        ----------
+        endog : ndarray
+            The endogenous response variable.
+        mu : ndarray
+            The inverse of the link function at the linear predicted values.
+        Returns
+        -------
+        resid_dev : float
+            Deviance residuals as defined below.
+        Notes
+        -----
+        .. math::
+            resid_dev_i = 2 * (endog_i * \ln(endog_i /
+            \mu_i) - (endog_i + 1 / \alpha) * \ln((endog_i + 1 / \alpha) /
+            (\mu_i + 1 / \alpha)))
+        """
+        endog_mu = self._clean(endog / mu)
+        endog_alpha = endog + 1 / self.alpha
+        mu_alpha = mu + 1 / self.alpha
+        resid_dev = endog * np.log(endog_mu)
+        resid_dev -= endog_alpha * np.log(endog_alpha / mu_alpha)
+        return 2 * resid_dev
+
+    def loglike_obs(self, endog, mu, var_weights=1.0, scale=1.0):
+        r"""
+        The log-likelihood function for each observation in terms of the fitted
+        mean response for the Negative Binomial distribution.
+        Parameters
+        ----------
+        endog : ndarray
+            Usually the endogenous response variable.
+        mu : ndarray
+            Usually but not always the fitted mean response variable.
+        var_weights : array_like
+            1d array of variance (analytic) weights. The default is 1.
+        scale : float
+            The scale parameter. The default is 1.
+        Returns
+        -------
+        ll_i : float
+            The value of the loglikelihood evaluated at
+            (endog, mu, var_weights, scale) as defined below.
+        Notes
+        -----
+        Defined as:
+        .. math::
+           llf = \sum_i var\_weights_i / scale * (Y_i * \log{(\alpha * \mu_i /
+                 (1 + \alpha * \mu_i))} - \log{(1 + \alpha * \mu_i)}/
+                 \alpha + Constant)
+        where :math:`Constant` is defined as:
+        .. math::
+           Constant = \ln \Gamma{(Y_i + 1/ \alpha )} - \ln \Gamma(Y_i + 1) -
+                      \ln \Gamma{(1/ \alpha )}
+        constant = (special.gammaln(endog + 1 / self.alpha) -
+                    special.gammaln(endog+1)-special.gammaln(1/self.alpha))
+        return (endog * np.log(self.alpha * mu / (1 + self.alpha * mu)) -
+                np.log(1 + self.alpha * mu) / self.alpha +
+                constant) * var_weights / scale
+        """
+        ll_obs = endog * np.log(self.alpha * mu)
+        ll_obs -= (endog + 1 / self.alpha) * np.log(1 + self.alpha * mu)
+        ll_obs += special.gammaln(endog + 1 / self.alpha)
+        ll_obs -= special.gammaln(1 / self.alpha)
+        ll_obs -= special.gammaln(endog + 1)
+        return var_weights / scale * ll_obs
+
+    def loglike(self, endog, mu, var_weights=1.0, freq_weights=1.0, scale=1.0):
+        r"""
+        The log-likelihood function in terms of the fitted mean response.
+        Parameters
+        ----------
+        endog : ndarray
+            Usually the endogenous response variable.
+        mu : ndarray
+            Usually but not always the fitted mean response variable.
+        var_weights : array_like
+            1d array of variance (analytic) weights. The default is 1.
+        freq_weights : array_like
+            1d array of frequency weights. The default is 1.
+        scale : float
+            The scale parameter. The default is 1.
+        Returns
+        -------
+        ll : float
+            The value of the loglikelihood evaluated at
+            (endog, mu, var_weights, freq_weights, scale) as defined below.
+        Notes
+        -----
+        Where :math:`ll_i` is the by-observation log-likelihood:
+        .. math::
+           ll = \sum(ll_i * freq\_weights_i)
+        ``ll_i`` is defined for each family. endog and mu are not restricted
+        to ``endog`` and ``mu`` respectively.  For instance, you could call
+        both ``loglike(endog, endog)`` and ``loglike(endog, mu)`` to get the
+        log-likelihood ratio.
+        """
+        ll_obs = self.loglike_obs(endog, mu, var_weights, scale)
+        return np.sum(ll_obs * freq_weights)
+
+    def resid_anscombe(self, endog, mu, var_weights=1.0, scale=1.0):
+        r"""
+        The Anscombe residuals
+        Parameters
+        ----------
+        endog : ndarray
+            The endogenous response variable
+        mu : ndarray
+            The inverse of the link function at the linear predicted values.
+        var_weights : array_like
+            1d array of variance (analytic) weights. The default is 1.
+        scale : float, optional
+            An optional argument to divide the residuals by sqrt(scale).
+            The default is 1.
+        Returns
+        -------
+        resid_anscombe : ndarray
+            The Anscombe residuals as defined below.
+        Notes
+        -----
+        Anscombe residuals for Negative Binomial are the same as for Binomial
+        upon setting :math:`n=-\frac{1}{\alpha}`. Due to the negative value of
+        :math:`-\alpha*Y` the representation with the hypergeometric function
+        :math:`H2F1(x) =  hyp2f1(2/3.,1/3.,5/3.,x)` is advantageous
+        .. math::
+            resid\_anscombe_i = \frac{3}{2} *
+            (Y_i^(2/3)*H2F1(-\alpha*Y_i) - \mu_i^(2/3)*H2F1(-\alpha*\mu_i))
+            / (\mu_i * (1+\alpha*\mu_i) * scale^3)^(1/6) * \sqrt(var\_weights)
+        Note that for the (unregularized) Beta function, one has
+        :math:`Beta(z,a,b) = z^a/a * H2F1(a,1-b,a+1,z)`
+        """
+
+        def hyp2f1(x):
+            return special.hyp2f1(2 / 3.0, 1 / 3.0, 5 / 3.0, x)
+
+        resid = (
+            3
+            / 2.0
+            * (
+                endog ** (2 / 3.0) * hyp2f1(-self.alpha * endog)
+                - mu ** (2 / 3.0) * hyp2f1(-self.alpha * mu)
+            )
+            / (mu * (1 + self.alpha * mu) * scale**3) ** (1 / 6.0)
+        )
+        resid *= np.sqrt(var_weights)
+        return resid
+
+    def deviance(self, endog, mu, var_weights=1.0, freq_weights=1.0, scale=1.0):
+        r"""
+        The deviance function evaluated at (endog, mu, var_weights,
+        freq_weights, scale) for the distribution.
+        Deviance is usually defined as twice the loglikelihood ratio.
+        Parameters
+        ----------
+        endog : array_like
+            The endogenous response variable
+        mu : array_like
+            The inverse of the link function at the linear predicted values.
+        var_weights : array_like
+            1d array of variance (analytic) weights. The default is 1.
+        freq_weights : array_like
+            1d array of frequency weights. The default is 1.
+        scale : float, optional
+            An optional scale argument. The default is 1.
+        Returns
+        -------
+        Deviance : ndarray
+            The value of deviance function defined below.
+        Notes
+        -----
+        Deviance is defined
+        .. math::
+           D = 2\sum_i (freq\_weights_i * var\_weights *
+           (llf(endog_i, endog_i) - llf(endog_i, \mu_i)))
+        where y is the endogenous variable. The deviance functions are
+        analytically defined for each family.
+        Internally, we calculate deviance as:
+        .. math::
+           D = \sum_i freq\_weights_i * var\_weights * resid\_dev_i  / scale
+        """
+        resid_dev = self.resid_dev(endog, mu)
+        return np.sum(resid_dev * freq_weights * var_weights / scale)
